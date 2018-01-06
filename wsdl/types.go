@@ -61,7 +61,6 @@ type Schema struct {
 	TargetNamespace string            `xml:"targetNamespace,attr"`
 	Namespaces      map[string]string `xml:"-"`
 	Imports         []*ImportSchema   `xml:"import"`
-	Includes        []*IncludeSchema  `xml:"include"`
 	SimpleTypes     []*SimpleType     `xml:"simpleType"`
 	ComplexTypes    []*ComplexType    `xml:"complexType"`
 	Elements        []*Element        `xml:"element"`
@@ -196,13 +195,6 @@ type ImportSchema struct {
 	Location  string   `xml:"schemaLocation,attr"`
 }
 
-// IncludeSchema points to another WSDL to be imported at schema level.
-type IncludeSchema struct {
-	XMLName   xml.Name `xml:"include"`
-	Namespace string   `xml:"namespace,attr"`
-	Location  string   `xml:"schemaLocation,attr"`
-}
-
 // Message describes the data being communicated, such as functions
 // and their parameters.
 type Message struct {
@@ -244,17 +236,10 @@ type IO struct {
 
 // Binding describes SOAP to WSDL binding.
 type Binding struct {
-	XMLName     xml.Name            `xml:"binding"`
-	Name        string              `xml:"name,attr"`
-	Type        string              `xml:"type,attr"`
-	BindingType *BindingType        `xml:"binding"`
-	Operations  []*BindingOperation `xml:"operation"`
-}
-
-// BindingType contains additional meta data on how to implement the binding.
-type BindingType struct {
-	Style     string `xml:"style,attr"`
-	Transport string `xml:"transport,attr"`
+	XMLName    xml.Name            `xml:"binding"`
+	Name       string              `xml:"name,attr"`
+	Type       string              `xml:"type,attr"`
+	Operations []*BindingOperation `xml:"operation"`
 }
 
 // BindingOperation describes the requirement for binding SOAP to WSDL

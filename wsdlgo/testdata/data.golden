@@ -1,6 +1,8 @@
 package dataendpointhttpbinding
 
 import (
+	"encoding/xml"
+
 	"github.com/fiorix/wsdl2go/soap"
 )
 
@@ -16,7 +18,7 @@ func NewDataEndpointPortType(cli *soap.Client) DataEndpointPortType {
 // and defines interface for the remote service. Useful for testing.
 type DataEndpointPortType interface {
 	// GetData was auto-generated from WSDL.
-	GetData(parameters *GetData) (*GetDataResp, error)
+	GetData(α *GetData) (β *GetDataResp, err error)
 }
 
 // BaseReq was auto-generated from WSDL.
@@ -88,6 +90,7 @@ func (t *DataGenerationResp) SetXMLType() {
 
 // GetData was auto-generated from WSDL.
 type GetData struct {
+	XMLName xml.Name           `xml:"http://pdf.host.com getData" json:"-" yaml:"-"`
 	Request *DataGenerationReq `xml:"request,omitempty" json:"request,omitempty" yaml:"request,omitempty"`
 }
 
@@ -96,38 +99,21 @@ type GetDataResp struct {
 	Return *DataGenerationResp `xml:"return,omitempty" json:"return,omitempty" yaml:"return,omitempty"`
 }
 
-// Operation wrapper for GetData.
-// OperationGetDataReq was auto-generated from WSDL.
-type OperationGetDataReq struct {
-	Parameters *GetData `xml:"parameters,omitempty" json:"parameters,omitempty" yaml:"parameters,omitempty"`
-}
-
-// Operation wrapper for GetData.
-// OperationGetDataResp was auto-generated from WSDL.
-type OperationGetDataResp struct {
-	Parameters *GetDataResp `xml:"parameters,omitempty" json:"parameters,omitempty" yaml:"parameters,omitempty"`
-}
-
 // dataEndpointPortType implements the DataEndpointPortType interface.
 type dataEndpointPortType struct {
 	cli *soap.Client
 }
 
 // GetData was auto-generated from WSDL.
-func (p *dataEndpointPortType) GetData(parameters *GetData) (*GetDataResp, error) {
-	α := struct {
-		OperationGetDataReq `xml:"ns:getData"`
-	}{
-		OperationGetDataReq{
-			parameters,
-		},
-	}
-
+func (p *dataEndpointPortType) GetData(α *GetData) (β *GetDataResp, err error) {
 	γ := struct {
-		OperationGetDataResp `xml:"getDataResponse"`
+		XMLName xml.Name `xml:"Envelope"`
+		Body    struct {
+			M GetDataResp `xml:"getDataResp"`
+		}
 	}{}
-	if err := p.cli.RoundTripWithAction("GetData", α, &γ); err != nil {
+	if err = p.cli.RoundTripWithAction("GetData", α, &γ); err != nil {
 		return nil, err
 	}
-	return γ.Parameters, nil
+	return &γ.Body.M, nil
 }

@@ -1,6 +1,8 @@
 package testsoap12binding
 
 import (
+	"encoding/xml"
+
 	"github.com/fiorix/wsdl2go/soap"
 )
 
@@ -16,19 +18,7 @@ func NewTest(cli *soap.Client) Test {
 // and defines interface for the remote service. Useful for testing.
 type Test interface {
 	// HelloWorld was auto-generated from WSDL.
-	HelloWorld(parameters string) (string, error)
-}
-
-// Operation wrapper for HelloWorld.
-// OperationHelloWorldMessageIn was auto-generated from WSDL.
-type OperationHelloWorldMessageIn struct {
-	Parameters *HelloRequest `xml:"parameters,omitempty" json:"parameters,omitempty" yaml:"parameters,omitempty"`
-}
-
-// Operation wrapper for HelloWorld.
-// OperationHelloWorldMessageOut was auto-generated from WSDL.
-type OperationHelloWorldMessageOut struct {
-	Parameters *HelloResponse `xml:"parameters,omitempty" json:"parameters,omitempty" yaml:"parameters,omitempty"`
+	HelloWorld(α string) (β string, err error)
 }
 
 // test implements the Test interface.
@@ -37,20 +27,15 @@ type test struct {
 }
 
 // HelloWorld was auto-generated from WSDL.
-func (p *test) HelloWorld(parameters string) (string, error) {
-	α := struct {
-		OperationHelloWorldMessageIn `xml:"tns:HelloWorld"`
-	}{
-		OperationHelloWorldMessageIn{
-			&parameters,
-		},
-	}
-
+func (p *test) HelloWorld(α string) (β string, err error) {
 	γ := struct {
-		OperationHelloWorldMessageOut `xml:"HelloWorldResponse"`
+		XMLName xml.Name `xml:"Envelope"`
+		Body    struct {
+			M string `xml:"HelloResponse"`
+		}
 	}{}
-	if err := p.cli.RoundTripSoap12("http://example.com/Test/HelloWorldRequest", α, &γ); err != nil {
+	if err = p.cli.RoundTripSoap12("http://example.com/Test/HelloWorldRequest", α, &γ); err != nil {
 		return "", err
 	}
-	return *γ.Parameters, nil
+	return γ.Body.M, nil
 }

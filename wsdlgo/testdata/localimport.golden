@@ -1,6 +1,8 @@
 package stockquotesoapbinding
 
 import (
+	"encoding/xml"
+
 	"github.com/fiorix/wsdl2go/soap"
 )
 
@@ -16,7 +18,7 @@ func NewStockQuotePortType(cli *soap.Client) StockQuotePortType {
 // and defines interface for the remote service. Useful for testing.
 type StockQuotePortType interface {
 	// GetLastTradePrice was auto-generated from WSDL.
-	GetLastTradePrice(body *TradePriceRequest) (*TradePrice, error)
+	GetLastTradePrice(α *TradePriceRequest) (β *TradePrice, err error)
 }
 
 // TradePrice was auto-generated from WSDL.
@@ -26,19 +28,8 @@ type TradePrice struct {
 
 // TradePriceRequest was auto-generated from WSDL.
 type TradePriceRequest struct {
-	TickerSymbol *string `xml:"tickerSymbol,omitempty" json:"tickerSymbol,omitempty" yaml:"tickerSymbol,omitempty"`
-}
-
-// Operation wrapper for GetLastTradePrice.
-// OperationGetLastTradePriceInput was auto-generated from WSDL.
-type OperationGetLastTradePriceInput struct {
-	Body *TradePriceRequest `xml:"body,omitempty" json:"body,omitempty" yaml:"body,omitempty"`
-}
-
-// Operation wrapper for GetLastTradePrice.
-// OperationGetLastTradePriceOutput was auto-generated from WSDL.
-type OperationGetLastTradePriceOutput struct {
-	Body *TradePrice `xml:"body,omitempty" json:"body,omitempty" yaml:"body,omitempty"`
+	XMLName      xml.Name `xml:"http://example.com/stockquote.wsdl TradePriceRequest" json:"-" yaml:"-"`
+	TickerSymbol *string  `xml:"tickerSymbol,omitempty" json:"tickerSymbol,omitempty" yaml:"tickerSymbol,omitempty"`
 }
 
 // stockQuotePortType implements the StockQuotePortType interface.
@@ -47,20 +38,15 @@ type stockQuotePortType struct {
 }
 
 // GetLastTradePrice was auto-generated from WSDL.
-func (p *stockQuotePortType) GetLastTradePrice(body *TradePriceRequest) (*TradePrice, error) {
-	α := struct {
-		OperationGetLastTradePriceInput `xml:"tns:GetLastTradePrice"`
-	}{
-		OperationGetLastTradePriceInput{
-			body,
-		},
-	}
-
+func (p *stockQuotePortType) GetLastTradePrice(α *TradePriceRequest) (β *TradePrice, err error) {
 	γ := struct {
-		OperationGetLastTradePriceOutput `xml:"GetLastTradePriceResponse"`
+		XMLName xml.Name `xml:"Envelope"`
+		Body    struct {
+			M TradePrice `xml:"TradePrice"`
+		}
 	}{}
-	if err := p.cli.RoundTripWithAction("http://example.com/GetLastTradePrice", α, &γ); err != nil {
+	if err = p.cli.RoundTripWithAction("http://example.com/GetLastTradePrice", α, &γ); err != nil {
 		return nil, err
 	}
-	return γ.Body, nil
+	return &γ.Body.M, nil
 }

@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -122,15 +121,6 @@ func gofmtPath() (string, error) {
 
 }
 
-var numberSequence = regexp.MustCompile(`([a-zA-Z])(\d+)([a-zA-Z]?)`)
-var numberReplacement = []byte(`$1 $2 $3`)
-
-func addWordBoundariesToNumbers(s string) string {
-	b := []byte(s)
-	b = numberSequence.ReplaceAll(b, numberReplacement)
-	return string(b)
-}
-
 func (ge *goEncoder) Encode(d *wsdl.Definitions) error {
 	if d == nil {
 		return nil
@@ -210,7 +200,7 @@ func (ge *goEncoder) encode(w io.Writer, d *wsdl.Definitions) error {
 			ge.writeGoFuncs,
 		)
 	} else {
-		// TODO: probably faulty wsdl?
+		// this is rpc; meh
 		ff = append(ff,
 			ge.writeGoFuncs,
 			ge.writeGoTypes,
@@ -274,17 +264,9 @@ func (ge *goEncoder) importSchema(d *wsdl.Definitions) error {
 			return err
 		}
 		ge.unionSchemasData(d, schema)
-		for _, item := range schema.Imports {
+		for _, i := range schema.Imports {
 			schema = &wsdl.Schema{}
-			err := ge.importRemote(item.Location, schema)
-			if err != nil {
-				return err
-			}
-			ge.unionSchemasData(d, schema)
-		}
-		for _, item := range schema.Includes {
-			schema = &wsdl.Schema{}
-			err := ge.importRemote(item.Location, schema)
+			err := ge.importRemote(i.Location, schema)
 			if err != nil {
 				return err
 			}
@@ -391,13 +373,9 @@ func (ge *goEncoder) cacheComplexTypeElements(ct *wsdl.ComplexType) {
 func (ge *goEncoder) cacheElements(ct []*wsdl.Element) {
 	for _, el := range ct {
 		if el.Name == "" || el.Type == "" {
-			if el.Ref == "" {
-				continue
-			}
-			el.Name = trimns(el.Ref)
-			el.Type = el.Name
+			continue
 		}
-		name := trimns(el.Name)
+		name := ge.trimns(el.Name)
 		if _, exists := ge.elements[name]; exists {
 			continue
 		}
@@ -465,7 +443,7 @@ func (ge *goEncoder) writeInterfaceFuncs(w io.Writer, d *wsdl.Definitions) error
 	for _, fn := range ge.funcnames {
 		op := ge.funcs[fn]
 		if _, exists := ge.soapOps[op.Name]; !exists {
-			// TODO: probably faulty wsdl?
+			// TODO: rpc?
 			continue
 		}
 		inParams, err := ge.inputParams(op)
@@ -476,8 +454,13 @@ func (ge *goEncoder) writeInterfaceFuncs(w io.Writer, d *wsdl.Definitions) error
 		if err != nil {
 			return err
 		}
-		in, out := code(inParams), codeParams(outParams)
-		name := goSymbol(op.Name)
+		if len(inParams) != 1 || len(outParams) != 2 {
+			continue
+		}
+		in, out := code(inParams), code(outParams)
+		name := strings.Title(op.Name)
+		in[0] = renameParam(in[0], "α")
+		out[0] = renameParam(out[0], "β")
 		var doc bytes.Buffer
 		ge.writeComments(&doc, name, op.Doc)
 		funcs[i] = &interfaceTypeFunc{
@@ -494,7 +477,7 @@ func (ge *goEncoder) writeInterfaceFuncs(w io.Writer, d *wsdl.Definitions) error
 		Impl  string // private type that implements the interface
 		Funcs []*interfaceTypeFunc
 	}{
-		goSymbol(n),
+		strings.Title(n),
 		strings.ToLower(n)[:1] + n[1:],
 		funcs[:i],
 	})
@@ -518,7 +501,7 @@ func (ge *goEncoder) writePortType(w io.Writer, d *wsdl.Definitions) error {
 		Interface string
 	}{
 		strings.ToLower(n)[:1] + n[1:],
-		goSymbol(n),
+		strings.Title(n),
 	})
 }
 
@@ -526,7 +509,7 @@ func (ge *goEncoder) writePortType(w io.Writer, d *wsdl.Definitions) error {
 // Functions are written in the same order of the WSDL document.
 func (ge *goEncoder) writeGoFuncs(w io.Writer, d *wsdl.Definitions) error {
 	if d.Binding.Type != "" {
-		a, b := trimns(d.Binding.Type), trimns(d.PortType.Name)
+		a, b := ge.trimns(d.Binding.Type), ge.trimns(d.PortType.Name)
 		if a != b {
 			return fmt.Errorf(
 				"binding %q requires port type %q but it's not defined",
@@ -547,20 +530,21 @@ func (ge *goEncoder) writeGoFuncs(w io.Writer, d *wsdl.Definitions) error {
 		if err != nil {
 			return err
 		}
-
-		ok := ge.writeSOAPFunc(w, d, op, inParams, outParams)
-		if !ok {
-			in, out := code(inParams), codeParams(outParams)
-			ret := make([]string, len(out))
-			for i, p := range outParams {
-				ret[i] = ge.wsdl2goDefault(p.dataType)
+		in, out := code(inParams), code(outParams)
+		ret := make([]string, len(out))
+		for i, p := range out {
+			parts := strings.SplitN(p, " ", 2)
+			if len(parts) == 2 {
+				ret[i] = ge.wsdl2goDefault(parts[1])
 			}
-
+		}
+		ok := ge.writeSOAPFunc(w, d, op, in, out, ret, outParams[0].xmlToken)
+		if !ok {
 			ge.needsStdPkg["errors"] = true
 			ge.needsStdPkg["context"] = true
 			in = append([]string{"ctx context.Context"}, in...)
-
-			fn := ge.fixFuncNameConflicts(goSymbol(op.Name))
+			ge.fixParamConflicts(in, out)
+			fn := ge.fixFuncNameConflicts(strings.Title(op.Name))
 			fmt.Fprintf(w, "func %s(%s) (%s) {\nreturn %s\n}\n\n",
 				fn,
 				strings.Join(in, ","),
@@ -574,144 +558,50 @@ func (ge *goEncoder) writeGoFuncs(w io.Writer, d *wsdl.Definitions) error {
 
 var soapFuncT = template.Must(template.New("soapFunc").Parse(
 	`func (p *{{.PortType}}) {{.Name}}({{.Input}}) ({{.Output}}) {
-	α := struct {
-		{{if .OpInputDataType}}
-			{{if .RPCStyle}}M{{end}} {{.OpInputDataType}} ` + "`xml:\"{{.OpName}}\"`" + `
-		{{end}}
-	}{
-		{{if .OpInputDataType}}{{.OpInputDataType}} {
-			{{range $index, $element := .InputNames}}{{$element}},
-			{{end}}
-		},{{end}}
-	}
-
 	γ := struct {
-		{{if .OpResponseDataType}}
-			{{if .RPCStyle}}M {{end}}{{.OpResponseDataType}} ` + "`xml:\"{{.OpResponseName}}\"`" + `
-		{{end}}
+		XMLName xml.Name ` + "`xml:\"Envelope\"`" + `
+		Body    struct {
+			M {{.OutputType}} ` + "`xml:\"{{.XMLOutputType}}\"`" + `
+		}
 	}{}
-	if err := p.cli.RoundTripWithAction("{{.Name}}", α, &γ); err != nil {
-		return {{.RetDef}}
+	if err = p.cli.RoundTripWithAction("{{.Name}}", α, &γ); err != nil {
+		return {{.RetDef}}, err
 	}
-	return {{range $index, $element := .OpOutputNames}}{{index $.OpOutputPrefixes $index}}γ.{{if $.RPCStyle}}M.{{end}}{{$element}}, {{end}}nil
+	return {{if .RetPtr}}&{{end}}γ.Body.M, nil
 }
 `))
 
 var soapActionFuncT = template.Must(template.New("soapActionFunc").Parse(
 	`func (p *{{.PortType}}) {{.Name}}({{.Input}}) ({{.Output}}) {
-	α := struct {
-		{{if .OpInputDataType}}
-			{{if .RPCStyle}}M{{end}} {{.OpInputDataType}} ` + "`xml:\"{{.OpName}}\"`" + `
-		{{end}}
-	}{
-		{{if .OpInputDataType}}{{.OpInputDataType}} {
-			{{range $index, $element := .InputNames}}{{$element}},
-			{{end}}
-		},{{end}}
-	}
-
 	γ := struct {
-		{{if .OpResponseDataType}}
-			{{if .RPCStyle}}M {{end}}{{.OpResponseDataType}} ` + "`xml:\"{{.OpResponseName}}\"`" + `
-		{{end}}
+		XMLName xml.Name ` + "`xml:\"Envelope\"`" + `
+		Body    struct {
+			M {{.OutputType}} ` + "`xml:\"{{.XMLOutputType}}\"`" + `
+		}
 	}{}
-	if err := p.cli.{{.RoundTripType}}("{{.Action}}", α, &γ); err != nil {
-		return {{.RetDef}}
+	if err = p.cli.{{.RoundTripType}}("{{.Action}}", α, &γ); err != nil {
+		return {{.RetDef}}, err
 	}
-	return {{range $index, $element := .OpOutputNames}}{{index $.OpOutputPrefixes $index}}γ.{{if $.RPCStyle}}M.{{end}}{{$element}}, {{end}}nil
+	return {{if .RetPtr}}&{{end}}γ.Body.M, nil
 }
 `))
 
-func (ge *goEncoder) writeSOAPFunc(w io.Writer, d *wsdl.Definitions, op *wsdl.Operation, in, out []*parameter) bool {
+func (ge *goEncoder) writeSOAPFunc(w io.Writer, d *wsdl.Definitions, op *wsdl.Operation, in, out, ret []string, xmlToken string) bool {
 	if _, exists := ge.soapOps[op.Name]; !exists {
-		// TODO: probably faulty wsdl?
 		return false
 	}
-
-	// Do we need to wrap into a operation element?
-	rpcStyle := false
-
-	if d.Binding.BindingType != nil {
-		rpcStyle = d.Binding.BindingType.Style == "rpc"
+	// TODO: handle other input params: e.g. SOAP headers.
+	if len(in) < 1 || len(out) != 2 {
+		return false
 	}
-
+	ge.needsStdPkg["encoding/xml"] = true
 	ge.needsExtPkg["github.com/fiorix/wsdl2go/soap"] = true
-
-	// inputNames describe the accessors to the input parameter names
-	inputNames := make([]string, len(in))
-	for index, name := range in {
-		returnVal := maskKeywordUsage(name.code)
-
-		if !strings.HasPrefix(name.dataType, "*") {
-			returnVal = "&" + returnVal
-		}
-
-		inputNames[index] = returnVal
+	in[0] = renameParam(in[0], "α")
+	out[0] = renameParam(out[0], "β")
+	typ := strings.SplitN(out[0], " ", 2)
+	if strings.HasPrefix(ret[0], "&") {
+		ret[0] = "nil"
 	}
-
-	// outputDataTypes describe the data types which are returned by the func
-	outputDataTypes := make([]string, len(out))
-
-	// retDefaults describes the default return values in case of an error
-	retDefaults := make([]string, len(out))
-
-	// operationOutputNames describes the fields which are part of the response we unmarshal
-	// len-1, because the last parameter is error, which is not part of the xml response we unmarshal
-	operationOutputNames := make([]string, len(out)-1)
-	operationOutputPrefixes := make([]string, len(out)-1)
-
-	for index, name := range out {
-		outputDataTypes[index] = name.dataType
-
-		// operationOutputNames names will only be computed till len-1
-		if index == len(out)-1 {
-			continue
-		}
-
-		operationOutputNames[index] = strings.ToUpper(name.code[:1]) + name.code[1:]
-		operationOutputPrefixes[index] = ""
-		retDefaults[index] = "nil"
-
-		// If the output is >not< a pointer, we need to return the value of the response
-		if !strings.HasPrefix(name.dataType, "*") {
-			operationOutputPrefixes[index] = "*"
-
-			// Also - only resolve the default for non-pointer returns (otherwise nil suffices)
-			retDefaults[index] = ge.wsdl2goDefault(name.dataType)
-		}
-	}
-	retDefaults[len(retDefaults)-1] = "err"
-
-	// Check if we need to prefix the op with a namespace
-	namespacedOpName := op.Name
-	nsSplit := strings.Split(ge.funcs[op.Name].Input.Message, ":")
-	if len(nsSplit) > 1 {
-		namespacedOpName = nsSplit[0] + ":" + namespacedOpName
-	}
-
-	// The response name is always the operation name + "Response" according to specification.
-	// Note, we also omit the namespace, since this does currently not work reliable with golang
-	// (See: https://github.com/golang/go/issues/14407)
-	opResponseName := op.Name + "Response"
-
-	// No-input operations can be inlined into an anonymous struct on rpc, and omitted otherwise
-	operationInputDataType := ""
-
-	if len(in) > 0 && op.Input != nil {
-		operationInputDataType = ge.sanitizedOperationsType(ge.messages[trimns(op.Input.Message)].Name)
-	} else if rpcStyle {
-		operationInputDataType = "struct{}"
-	}
-
-	// No-output operations can be inlined into an anonymous struct on rpc, and omitted otherwise
-	operationOutputDataType := ""
-
-	if len(out) > 0 && op.Output != nil {
-		operationOutputDataType = ge.sanitizedOperationsType(ge.messages[trimns(op.Output.Message)].Name)
-	} else if rpcStyle {
-		operationInputDataType = "struct{}"
-	}
-
 	soapFunctionName := "RoundTripSoap12"
 	soapAction := ""
 	if bindingOp, exists := ge.soapOps[op.Name]; exists {
@@ -723,68 +613,48 @@ func (ge *goEncoder) writeSOAPFunc(w io.Writer, d *wsdl.Definitions, op *wsdl.Op
 	}
 	if soapAction != "" {
 		soapActionFuncT.Execute(w, &struct {
-			RoundTripType      string
-			Action             string
-			PortType           string
-			Name               string
-			OpName             string
-			OpInputDataType    string
-			InputNames         []string
-			OpResponseName     string
-			OpResponseDataType string
-			OpOutputNames      []string
-			OpOutputPrefixes   []string
-			Input              string
-			Output             string
-			RetDef             string
-			RPCStyle           bool
+			RoundTripType string
+			Action        string
+			PortType      string
+			Name          string
+			Input         string
+			Output        string
+			OutputType    string
+			XMLOutputType string
+			RetPtr        bool
+			RetDef        string
 		}{
 			soapFunctionName,
 			soapAction,
 			strings.ToLower(d.PortType.Name[:1]) + d.PortType.Name[1:],
-			goSymbol(op.Name),
-			namespacedOpName,
-			operationInputDataType,
-			inputNames,
-			opResponseName,
-			operationOutputDataType,
-			operationOutputNames,
-			operationOutputPrefixes,
-			strings.Join(code(in), ","),
-			strings.Join(outputDataTypes, ","),
-			strings.Join(retDefaults, ","),
-			rpcStyle,
+			strings.Title(op.Name),
+			strings.Join(in, ","),
+			strings.Join(out, ","),
+			strings.TrimPrefix(typ[1], "*"),
+			strings.TrimPrefix(xmlToken, "*"),
+			typ[1][0] == '*',
+			ret[0],
 		})
 		return true
 	}
 	soapFuncT.Execute(w, &struct {
-		PortType           string
-		Name               string
-		OpName             string
-		OpInputDataType    string
-		InputNames         []string
-		OpResponseName     string
-		OpResponseDataType string
-		OpOutputNames      []string
-		OpOutputPrefixes   []string
-		Input              string
-		Output             string
-		RetDef             string
-		RPCStyle           bool
+		PortType      string
+		Name          string
+		Input         string
+		Output        string
+		OutputType    string
+		XMLOutputType string
+		RetPtr        bool
+		RetDef        string
 	}{
 		strings.ToLower(d.PortType.Name[:1]) + d.PortType.Name[1:],
-		goSymbol(op.Name),
-		namespacedOpName,
-		operationInputDataType,
-		inputNames,
-		opResponseName,
-		operationOutputDataType,
-		operationOutputNames,
-		operationOutputPrefixes,
-		strings.Join(code(in), ","),
-		strings.Join(outputDataTypes, ","),
-		strings.Join(retDefaults, ","),
-		rpcStyle,
+		strings.Title(op.Name),
+		strings.Join(in, ","),
+		strings.Join(out, ","),
+		strings.TrimPrefix(typ[1], "*"),
+		strings.TrimPrefix(xmlToken, "*"),
+		typ[1][0] == '*',
+		ret[0],
 	})
 	return true
 }
@@ -802,24 +672,21 @@ func (ge *goEncoder) inputParams(op *wsdl.Operation) ([]*parameter, error) {
 	if op.Input == nil {
 		return []*parameter{}, nil
 	}
-	im := trimns(op.Input.Message)
+	im := ge.trimns(op.Input.Message)
 	req, ok := ge.messages[im]
 	if !ok {
 		return nil, fmt.Errorf("operation %q wants input message %q but it's not defined", op.Name, im)
 	}
-
-	// TODO: I had to disable this for my use case - do other use cases still work with false?
-	return ge.genParams(req, false), nil
+	return ge.genParams(req, true), nil
 }
 
 // returns list of function output parameters plus error.
 func (ge *goEncoder) outputParams(op *wsdl.Operation) ([]*parameter, error) {
-	out := []*parameter{{code: "err", dataType: "error"}}
-
+	out := []*parameter{{code: "err error"}}
 	if op.Output == nil {
 		return out, nil
 	}
-	om := trimns(op.Output.Message)
+	om := ge.trimns(op.Output.Message)
 	resp, ok := ge.messages[om]
 	if !ok {
 		return nil, fmt.Errorf("operation %q wants output message %q but it's not defined", op.Name, om)
@@ -857,34 +724,15 @@ var isGoKeyword = map[string]bool{
 
 type parameter struct {
 	code     string
-	dataType string
 	xmlToken string
 }
 
 func code(list []*parameter) []string {
 	code := make([]string, len(list))
 	for i, p := range list {
-		code[i] = maskKeywordUsage(p.code) + " " + p.dataType
+		code[i] = p.code
 	}
 	return code
-}
-
-func codeParams(list []*parameter) []string {
-	code := make([]string, len(list))
-	for i, p := range list {
-		code[i] = p.dataType
-	}
-	return code
-}
-
-func maskKeywordUsage(code string) string {
-	returnVal := code
-
-	if isGoKeyword[code] {
-		returnVal = "_" + code
-	}
-
-	return returnVal
 }
 
 func (ge *goEncoder) genParams(m *wsdl.Message, needsTag bool) []*parameter {
@@ -894,20 +742,23 @@ func (ge *goEncoder) genParams(m *wsdl.Message, needsTag bool) []*parameter {
 		switch {
 		case param.Type != "":
 			t = ge.wsdl2goType(param.Type)
-			elName = trimns(param.Type)
+			elName = ge.trimns(param.Type)
 			token = t
 		case param.Element != "":
-			elName = trimns(param.Element)
+			elName = ge.trimns(param.Element)
 			if el, ok := ge.elements[elName]; ok {
-				t = ge.wsdl2goType(trimns(el.Type))
+				t = ge.wsdl2goType(ge.trimns(el.Type))
 			} else {
 				t = ge.wsdl2goType(param.Element)
 			}
-			token = trimns(param.Element)
+			token = ge.trimns(param.Element)
 		}
-		params[i] = &parameter{code: param.Name, dataType: t, xmlToken: token}
+		name := param.Name
+		if isGoKeyword[name] {
+			name = "_" + name
+		}
+		params[i] = &parameter{code: name + " " + t, xmlToken: token}
 		if needsTag {
-			ge.needsStdPkg["encoding/xml"] = true
 			ge.needsTag[strings.TrimPrefix(t, "*")] = elName
 		}
 	}
@@ -938,7 +789,7 @@ func (ge *goEncoder) fixParamConflicts(req, resp []string) {
 			y := strings.SplitN(b, " ", 2)
 			if len(y) > 1 {
 				if x == y[0] {
-					n := goSymbol(y[0])
+					n := strings.Title(y[0])
 					resp[j] = "resp" + n + " " + y[1]
 				}
 			}
@@ -946,20 +797,12 @@ func (ge *goEncoder) fixParamConflicts(req, resp []string) {
 	}
 }
 
-// Helps to clean up operation names, so we can generate
-// nice datatype names which make golang happy.
-// E.g. - a soap operation gkstServer_getVersion is sanitized
-// to gkstServerGetVersion (remove snake case)
-func (ge *goEncoder) sanitizedOperationsType(opName string) string {
-	return "Operation" + goSymbol(opName)
-}
-
 // Converts types from wsdl type to Go type.
 func (ge *goEncoder) wsdl2goType(t string) string {
 	// TODO: support other types.
-	v := trimns(t)
+	v := ge.trimns(t)
 	if _, exists := ge.stypes[v]; exists {
-		return goSymbol(v)
+		return v
 	}
 	switch strings.ToLower(v) {
 	case "int":
@@ -974,7 +817,7 @@ func (ge *goEncoder) wsdl2goType(t string) string {
 		return "bool"
 	case "hexbinary", "base64binary":
 		return "[]byte"
-	case "string", "anyuri", "token", "nmtoken", "qname", "language", "id":
+	case "string", "anyuri", "token", "qname":
 		return "string"
 	case "date":
 		ge.needsDateType = true
@@ -999,13 +842,13 @@ func (ge *goEncoder) wsdl2goType(t string) string {
 	case "anysequence", "anytype", "anysimpletype":
 		return "interface{}"
 	default:
-		return "*" + goSymbol(v)
+		return "*" + strings.Title(strings.Replace(v, ".", "", -1))
 	}
 }
 
 // Returns the default Go type for the given wsdl type.
 func (ge *goEncoder) wsdl2goDefault(t string) string {
-	v := trimns(t)
+	v := ge.trimns(t)
 	if v != "" && v[0] == '*' {
 		v = v[1:]
 	}
@@ -1018,23 +861,31 @@ func (ge *goEncoder) wsdl2goDefault(t string) string {
 		return "0"
 	case "string":
 		return `""`
-	case "[]byte", "interface{}":
+	case "[]byte":
 		return "nil"
 	default:
 		return "&" + v + "{}"
 	}
 }
 
+func (ge *goEncoder) trimns(s string) string {
+	n := strings.SplitN(s, ":", 2)
+	if len(n) == 2 {
+		return n[1]
+	}
+	return s
+}
+
 func (ge *goEncoder) renameType(old, name string) {
 	// TODO: rename Elements that point to this type also?
 	ct, exists := ge.ctypes[old]
 	if !exists {
-		old = trimns(old)
+		old = ge.trimns(old)
 		ct, exists = ge.ctypes[old]
 		if !exists {
 			return
 		}
-		name = trimns(name)
+		name = ge.trimns(name)
 	}
 	ct.Name = name
 	delete(ge.ctypes, old)
@@ -1049,11 +900,10 @@ func (ge *goEncoder) writeGoTypes(w io.Writer, d *wsdl.Definitions) error {
 	var b bytes.Buffer
 	for _, name := range ge.sortedSimpleTypes() {
 		st := ge.stypes[name]
-		stname := goSymbol(st.Name)
 		if st.Restriction != nil {
-			ge.writeComments(&b, stname, "")
-			fmt.Fprintf(&b, "type %s %s\n\n", stname, ge.wsdl2goType(st.Restriction.Base))
-			ge.genValidator(&b, stname, st.Restriction)
+			ge.writeComments(&b, st.Name, "")
+			fmt.Fprintf(&b, "type %s %s\n\n", st.Name, ge.wsdl2goType(st.Restriction.Base))
+			ge.genValidator(&b, st.Name, st.Restriction)
 		} else if st.Union != nil {
 			types := strings.Split(st.Union.MemberTypes, " ")
 			ntypes := make([]string, len(types))
@@ -1064,9 +914,9 @@ func (ge *goEncoder) writeGoTypes(w io.Writer, d *wsdl.Definitions) error {
 				}
 				ntypes[i] = ge.wsdl2goType(t)
 			}
-			doc := stname + " is a union of: " + strings.Join(ntypes, ", ")
-			ge.writeComments(&b, stname, doc)
-			fmt.Fprintf(&b, "type %s interface{}\n\n", stname)
+			doc := st.Name + " is a union of: " + strings.Join(ntypes, ", ")
+			ge.writeComments(&b, st.Name, doc)
+			fmt.Fprintf(&b, "type %s interface{}\n\n", st.Name)
 		}
 	}
 	var err error
@@ -1078,17 +928,6 @@ func (ge *goEncoder) writeGoTypes(w io.Writer, d *wsdl.Definitions) error {
 		}
 		ge.genGoXMLTypeFunction(&b, ct)
 	}
-
-	// Operation wrappers - mainly used for rpc, not exclusively
-	for _, name := range ge.sortedOperations() {
-		ct := ge.soapOps[name]
-
-		err = ge.genGoOpStruct(&b, d, ct)
-		if err != nil {
-			return err
-		}
-	}
-
 	ge.genDateTypes(w) // must be called last
 	_, err = io.Copy(w, &b)
 	return err
@@ -1109,17 +948,6 @@ func (ge *goEncoder) sortedComplexTypes() []string {
 	keys := make([]string, len(ge.ctypes))
 	i := 0
 	for k := range ge.ctypes {
-		keys[i] = k
-		i++
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func (ge *goEncoder) sortedOperations() []string {
-	keys := make([]string, len(ge.soapOps))
-	i := 0
-	for k := range ge.soapOps {
 		keys[i] = k
 		i++
 	}
@@ -1210,7 +1038,7 @@ func (ge *goEncoder) genGoXMLTypeFunction(w io.Writer, ct *wsdl.ComplexType) {
 	ext := ct.ComplexContent.Extension
 	if ext.Base != "" && !ct.Abstract {
 		ge.writeComments(w, "SetXMLType", "")
-		fmt.Fprintf(w, "func (t *%s) SetXMLType() {\n", goSymbol(ct.Name))
+		fmt.Fprintf(w, "func (t *%s) SetXMLType() {\n", strings.Title(ct.Name))
 		fmt.Fprintf(w, "if t.OverrideTypeAttrXSI != nil {\n")
 		fmt.Fprintf(w, "    t.TypeAttrXSI = *t.OverrideTypeAttrXSI\n")
 		fmt.Fprintf(w, "} else {\n")
@@ -1237,25 +1065,6 @@ func (ge *goEncoder) genXMLName(w io.Writer, targetNamespace string, name string
 	}
 }
 
-var invalidGoSymbol = regexp.MustCompile(`[0-9_]*[^0-9a-zA-Z_]+`)
-
-func goSymbol(s string) string {
-	v := invalidGoSymbol.ReplaceAllString(trimns(s), " ")
-	var name string
-	for _, part := range strings.Split(v, " ") {
-		name += strings.Title(part)
-	}
-	return name
-}
-
-func trimns(s string) string {
-	n := strings.SplitN(s, ":", 2)
-	if len(n) == 2 {
-		return n[1]
-	}
-	return s
-}
-
 func (ge *goEncoder) genGoStruct(w io.Writer, d *wsdl.Definitions, ct *wsdl.ComplexType) error {
 	c := 0
 	if len(ct.AllElements) == 0 {
@@ -1269,19 +1078,17 @@ func (ge *goEncoder) genGoStruct(w io.Writer, d *wsdl.Definitions, ct *wsdl.Comp
 	} else if len(ct.Sequence.ComplexTypes) == 0 && len(ct.Sequence.Elements) == 0 {
 		c++
 	}
-	name := goSymbol(ct.Name)
+	name := strings.Title(ct.Name)
 	ge.writeComments(w, name, ct.Doc)
 	if ct.Abstract {
 		fmt.Fprintf(w, "type %s interface{}\n\n", name)
 		return nil
 	}
 	if ct.Sequence != nil && ct.Sequence.Any != nil {
-		if len(ct.Sequence.Elements) == 0 {
-			fmt.Fprintf(w, "type %s []interface{}\n\n", name)
-			return nil
-		}
+		fmt.Fprintf(w, "type %s []interface{}\n\n", name)
+		return nil
 	}
-	if c > 2 && len(ct.Attributes) == 0 {
+	if c > 2 {
 		fmt.Fprintf(w, "type %s struct {\n", name)
 		ge.genXMLName(w, d.TargetNamespace, name)
 		fmt.Fprintf(w, "}\n\n")
@@ -1305,23 +1112,6 @@ func (ge *goEncoder) genGoStruct(w io.Writer, d *wsdl.Definitions, ct *wsdl.Comp
 	return nil
 }
 
-func (ge *goEncoder) genGoOpStruct(w io.Writer, d *wsdl.Definitions, bo *wsdl.BindingOperation) error {
-	name := goSymbol(bo.Name)
-
-	inputMessage := ge.messages[trimns(ge.funcs[bo.Name].Input.Message)]
-
-	// No-Op on operations which don't take arguments
-	// (These can be inlined, and don't need to pollute the file)
-	if len(inputMessage.Parts) > 0 {
-		ge.genOpStructMessage(w, d, name, inputMessage)
-	}
-
-	// Output messages are always required
-	ge.genOpStructMessage(w, d, name, ge.messages[trimns(ge.funcs[bo.Name].Output.Message)])
-
-	return nil
-}
-
 func (ge *goEncoder) genStructFields(w io.Writer, d *wsdl.Definitions, ct *wsdl.ComplexType) error {
 	err := ge.genComplexContent(w, d, ct)
 	if err != nil {
@@ -1330,43 +1120,13 @@ func (ge *goEncoder) genStructFields(w io.Writer, d *wsdl.Definitions, ct *wsdl.
 	return ge.genElements(w, ct)
 }
 
-func (ge *goEncoder) genOpStructMessage(w io.Writer, d *wsdl.Definitions, name string, message *wsdl.Message) {
-	sanitizedMessageName := ge.sanitizedOperationsType(message.Name)
-
-	ge.writeComments(w, sanitizedMessageName, "Operation wrapper for "+name+".")
-	ge.writeComments(w, sanitizedMessageName, "")
-	fmt.Fprintf(w, "type %s struct {\n", sanitizedMessageName)
-	if elName, ok := ge.needsTag[sanitizedMessageName]; ok {
-		fmt.Fprintf(w, "XMLName xml.Name `xml:\"%s %s\" json:\"-\" yaml:\"-\"`\n",
-			d.TargetNamespace, elName)
-	}
-
-	for _, part := range message.Parts {
-		wsdlType := part.Type
-
-		// Probably soap12
-		if wsdlType == "" {
-			wsdlType = part.Element
-		}
-
-		ge.genElementField(w, &wsdl.Element{
-			XMLName: part.XMLName,
-			Name:    part.Name,
-			Type:    wsdlType,
-			// TODO: Maybe one could make guesses about nillable?
-		})
-	}
-
-	fmt.Fprintf(w, "}\n\n")
-}
-
 func (ge *goEncoder) genComplexContent(w io.Writer, d *wsdl.Definitions, ct *wsdl.ComplexType) error {
 	if ct.ComplexContent == nil || ct.ComplexContent.Extension == nil {
 		return nil
 	}
 	ext := ct.ComplexContent.Extension
 	if ext.Base != "" {
-		base, exists := ge.ctypes[trimns(ext.Base)]
+		base, exists := ge.ctypes[ge.trimns(ext.Base)]
 		if exists {
 			err := ge.genStructFields(w, d, base)
 			if err != nil {
@@ -1399,10 +1159,11 @@ func (ge *goEncoder) genElements(w io.Writer, ct *wsdl.ComplexType) error {
 	for _, el := range ct.AllElements {
 		ge.genElementField(w, el)
 	}
-	if ct.Sequence != nil {
-		for _, el := range ct.Sequence.Elements {
-			ge.genElementField(w, el)
-		}
+	if ct.Sequence == nil {
+		return nil
+	}
+	for _, el := range ct.Sequence.Elements {
+		ge.genElementField(w, el)
 	}
 	for _, attr := range ct.Attributes {
 		ge.genAttributeField(w, attr)
@@ -1412,7 +1173,7 @@ func (ge *goEncoder) genElements(w io.Writer, ct *wsdl.ComplexType) error {
 
 func (ge *goEncoder) genElementField(w io.Writer, el *wsdl.Element) {
 	if el.Ref != "" {
-		ref := trimns(el.Ref)
+		ref := ge.trimns(el.Ref)
 		nel, ok := ge.elements[ref]
 		if !ok {
 			return
@@ -1446,7 +1207,7 @@ func (ge *goEncoder) genElementField(w io.Writer, el *wsdl.Element) {
 		et = "string"
 	}
 	tag := el.Name
-	fmt.Fprintf(w, "%s ", goSymbol(el.Name))
+	fmt.Fprintf(w, "%s ", strings.Title(el.Name))
 	if el.Max != "" && el.Max != "1" {
 		fmt.Fprintf(w, "[]")
 		if slicetype != "" {
@@ -1467,15 +1228,12 @@ func (ge *goEncoder) genElementField(w io.Writer, el *wsdl.Element) {
 }
 
 func (ge *goEncoder) genAttributeField(w io.Writer, attr *wsdl.Attribute) {
-	if attr.Name == "" && attr.Ref != "" {
-		attr.Name = trimns(attr.Ref)
-	}
 	if attr.Type == "" {
 		attr.Type = "string"
 	}
 
 	tag := fmt.Sprintf("%s,attr", attr.Name)
-	fmt.Fprintf(w, "%s ", goSymbol(attr.Name))
+	fmt.Fprintf(w, "%s ", strings.Title(attr.Name))
 	typ := ge.wsdl2goType(attr.Type)
 	if attr.Nillable || attr.Min == 0 {
 		tag += ",omitempty"
@@ -1488,7 +1246,7 @@ func (ge *goEncoder) genAttributeField(w io.Writer, attr *wsdl.Attribute) {
 func (ge *goEncoder) writeComments(w io.Writer, typeName, comment string) {
 	comment = strings.Trim(strings.Replace(comment, "\n", " ", -1), " ")
 	if comment == "" {
-		comment = goSymbol(typeName) + " was auto-generated from WSDL."
+		comment = strings.Title(typeName) + " was auto-generated from WSDL."
 	}
 	count, line := 0, ""
 	words := strings.Split(comment, " ")

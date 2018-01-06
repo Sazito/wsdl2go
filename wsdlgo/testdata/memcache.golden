@@ -1,6 +1,8 @@
 package memoryservice
 
 import (
+	"encoding/xml"
+
 	"github.com/fiorix/wsdl2go/soap"
 )
 
@@ -16,13 +18,13 @@ func NewMemoryServicePortType(cli *soap.Client) MemoryServicePortType {
 // and defines interface for the remote service. Useful for testing.
 type MemoryServicePortType interface {
 	// Get was auto-generated from WSDL.
-	Get(key string) (*GetResponse, error)
+	Get(α string) (β *GetResponse, err error)
 
 	// GetMulti was auto-generated from WSDL.
-	GetMulti(keys *GetMultiRequest) (*GetMultiResponse, error)
+	GetMulti(α *GetMultiRequest) (β *GetMultiResponse, err error)
 
 	// Set was auto-generated from WSDL.
-	Set(info *SetRequest) (bool, error)
+	Set(α *SetRequest) (β bool, err error)
 }
 
 // Duration in WSDL format.
@@ -41,6 +43,7 @@ type GetResponse struct {
 
 // SetRequest carries a key-value pair.
 type SetRequest struct {
+	XMLName    xml.Name  `xml:"http://localhost:8080/MemoryService.wsdl SetRequest" json:"-" yaml:"-"`
 	Key        string    `xml:"Key" json:"Key" yaml:"Key"`
 	Value      string    `xml:"Value" json:"Value" yaml:"Value"`
 	Expiration *Duration `xml:"Expiration,omitempty" json:"Expiration,omitempty" yaml:"Expiration,omitempty"`
@@ -48,43 +51,8 @@ type SetRequest struct {
 
 // GetMultiRequest was auto-generated from WSDL.
 type GetMultiRequest struct {
-	Keys []string `xml:"Keys" json:"Keys" yaml:"Keys"`
-}
-
-// Operation wrapper for Get.
-// OperationGetRequest was auto-generated from WSDL.
-type OperationGetRequest struct {
-	Key *string `xml:"key,omitempty" json:"key,omitempty" yaml:"key,omitempty"`
-}
-
-// Operation wrapper for Get.
-// OperationGetResponse was auto-generated from WSDL.
-type OperationGetResponse struct {
-	Resp *GetResponse `xml:"resp,omitempty" json:"resp,omitempty" yaml:"resp,omitempty"`
-}
-
-// Operation wrapper for GetMulti.
-// OperationGetMultiRequest was auto-generated from WSDL.
-type OperationGetMultiRequest struct {
-	Keys *GetMultiRequest `xml:"keys,omitempty" json:"keys,omitempty" yaml:"keys,omitempty"`
-}
-
-// Operation wrapper for GetMulti.
-// OperationGetMultiResponse was auto-generated from WSDL.
-type OperationGetMultiResponse struct {
-	Values *GetMultiResponse `xml:"values,omitempty" json:"values,omitempty" yaml:"values,omitempty"`
-}
-
-// Operation wrapper for Set.
-// OperationSetRequest was auto-generated from WSDL.
-type OperationSetRequest struct {
-	Info *SetRequest `xml:"info,omitempty" json:"info,omitempty" yaml:"info,omitempty"`
-}
-
-// Operation wrapper for Set.
-// OperationSetResponse was auto-generated from WSDL.
-type OperationSetResponse struct {
-	Ok *bool `xml:"ok,omitempty" json:"ok,omitempty" yaml:"ok,omitempty"`
+	XMLName xml.Name `xml:"http://localhost:8080/MemoryService.wsdl GetMultiRequest" json:"-" yaml:"-"`
+	Keys    []string `xml:"Keys" json:"Keys" yaml:"Keys"`
 }
 
 // memoryServicePortType implements the MemoryServicePortType interface.
@@ -93,58 +61,43 @@ type memoryServicePortType struct {
 }
 
 // Get was auto-generated from WSDL.
-func (p *memoryServicePortType) Get(key string) (*GetResponse, error) {
-	α := struct {
-		M OperationGetRequest `xml:"tns:Get"`
-	}{
-		OperationGetRequest{
-			&key,
-		},
-	}
-
+func (p *memoryServicePortType) Get(α string) (β *GetResponse, err error) {
 	γ := struct {
-		M OperationGetResponse `xml:"GetResponse"`
+		XMLName xml.Name `xml:"Envelope"`
+		Body    struct {
+			M GetResponse `xml:"GetResponse"`
+		}
 	}{}
-	if err := p.cli.RoundTripWithAction("Get", α, &γ); err != nil {
+	if err = p.cli.RoundTripWithAction("Get", α, &γ); err != nil {
 		return nil, err
 	}
-	return γ.M.Resp, nil
+	return &γ.Body.M, nil
 }
 
 // GetMulti was auto-generated from WSDL.
-func (p *memoryServicePortType) GetMulti(keys *GetMultiRequest) (*GetMultiResponse, error) {
-	α := struct {
-		M OperationGetMultiRequest `xml:"tns:GetMulti"`
-	}{
-		OperationGetMultiRequest{
-			keys,
-		},
-	}
-
+func (p *memoryServicePortType) GetMulti(α *GetMultiRequest) (β *GetMultiResponse, err error) {
 	γ := struct {
-		M OperationGetMultiResponse `xml:"GetMultiResponse"`
+		XMLName xml.Name `xml:"Envelope"`
+		Body    struct {
+			M GetMultiResponse `xml:"GetMultiResponse"`
+		}
 	}{}
-	if err := p.cli.RoundTripWithAction("GetMulti", α, &γ); err != nil {
+	if err = p.cli.RoundTripWithAction("GetMulti", α, &γ); err != nil {
 		return nil, err
 	}
-	return γ.M.Values, nil
+	return &γ.Body.M, nil
 }
 
 // Set was auto-generated from WSDL.
-func (p *memoryServicePortType) Set(info *SetRequest) (bool, error) {
-	α := struct {
-		M OperationSetRequest `xml:"tns:Set"`
-	}{
-		OperationSetRequest{
-			info,
-		},
-	}
-
+func (p *memoryServicePortType) Set(α *SetRequest) (β bool, err error) {
 	γ := struct {
-		M OperationSetResponse `xml:"SetResponse"`
+		XMLName xml.Name `xml:"Envelope"`
+		Body    struct {
+			M bool `xml:"bool"`
+		}
 	}{}
-	if err := p.cli.RoundTripWithAction("Set", α, &γ); err != nil {
+	if err = p.cli.RoundTripWithAction("Set", α, &γ); err != nil {
 		return false, err
 	}
-	return *γ.M.Ok, nil
+	return γ.Body.M, nil
 }
