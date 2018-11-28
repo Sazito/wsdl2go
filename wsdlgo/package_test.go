@@ -1,8 +1,8 @@
 package wsdlgo
 
 import (
+	"github.com/miadabrin/wsdl2go/wsdl"
 	"testing"
-	"github.com/fiorix/wsdl2go/wsdl"
 )
 
 func TestBindingPackageName_String(t *testing.T) {

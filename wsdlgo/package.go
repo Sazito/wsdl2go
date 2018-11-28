@@ -1,7 +1,7 @@
 package wsdlgo
 
 import (
-	"github.com/fiorix/wsdl2go/wsdl"
+	"github.com/miadabrin/wsdl2go/wsdl"
 	"strings"
 )
 
